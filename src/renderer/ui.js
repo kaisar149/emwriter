@@ -61,6 +61,13 @@
   // ---- Context menu ------------------------------------------------------------
   let ctx = null;
   const closeCtx = () => { if (ctx) { ctx.remove(); ctx = null; } };
+  const menuDot = (colour) => {
+    const d = document.createElement('span');
+    d.className = 'menu-dot';
+    d.setAttribute('aria-hidden', 'true');
+    d.style.setProperty('--dot', colour);
+    return d;
+  };
   emw.menu = (x, y, items) => {
     closeCtx();
     ctx = document.createElement('div');
@@ -82,11 +89,19 @@
         mark.className = 'menu-check';
         mark.setAttribute('aria-hidden', 'true');
         mark.textContent = it.checked ? '✓' : '';
-        row.append(mark, it.label);
+        row.append(mark);
+        if (it.dot) row.append(menuDot(it.dot));
+        row.append(it.label);
         b.append(row);
       } else {
         b.setAttribute('role', 'menuitem');
-        b.textContent = it.label;
+        if (it.dot) {
+          // A coloured dot in front of the label (part 7j: relationship types). `dot` is any CSS colour.
+          const row = document.createElement('span');
+          row.className = 'menu-choice';
+          row.append(menuDot(it.dot), it.label);
+          b.append(row);
+        } else b.textContent = it.label;
       }
       b.addEventListener('click', () => { closeCtx(); it.run(); });
       ctx.append(b);
@@ -169,6 +184,10 @@
       ['Timeline', '', 'goTimeline'],
       ['Characters', '', 'goCharacters'],
       ['Family trees', '', 'openFamilyTrees'],
+      ['Add character to family tree…', '', 'familyAddCharacter'],
+      ['Auto-arrange family tree', '', 'familyAutoArrange'],
+      ['Fit family tree in view', '', 'familyFit'],
+      ['Export family tree as image…', '', 'familyExport'],
       ['Places', '', 'goPlaces'],
       ['Darlings', '', 'goDarlings'],
       ['Notes', '', 'goNotes'],

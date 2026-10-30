@@ -39,6 +39,7 @@ contextBridge.exposeInMainWorld('api', {
   snapshotRemove: (id) => ipcRenderer.invoke('snapshot:remove', id),
   snapshotRestoreRemoved: (id) => ipcRenderer.invoke('snapshot:restore-removed', id),
   snapshotOutline: (id) => ipcRenderer.invoke('snapshot:outline', id),
+  familyExportPng: (dataUrl, name) => ipcRenderer.invoke('family:export-png', dataUrl, name),
   onSpellContext: (cb) => ipcRenderer.on('spell:context', (_e, d) => cb(d)),
   spellReplace: (text) => ipcRenderer.invoke('spell:replace', text),
   spellInfo: () => ipcRenderer.invoke('spell:info'),

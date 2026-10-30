@@ -45,6 +45,31 @@ function registerIpc() {
   ipcMain.handle('spell:info', () => ({ system: SYSTEM_SPELLER, language: SYSTEM_SPELLER ? null : currentLang }));
   ipcMain.handle('spell:set-language', (_e, id) => setSpellLanguage(id));
 
+  // family:export-png (part 7j). The renderer draws the tree to a canvas and sends the PNG as a data URL.
+  // Everything is checked here (type, signature, size), the save dialog is shown here, and only
+  // { ok } or { canceled } goes back: the renderer never learns the path.
+  const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  const PNG_MAX_BYTES = 40 * 1024 * 1024;
+  ipcMain.handle('family:export-png', async (e, dataUrl, suggestedName) => {
+    const m = typeof dataUrl === 'string' && dataUrl.length < PNG_MAX_BYTES * 1.4 + 64 ? /^data:image\/png;base64,([A-Za-z0-9+/=]+)$/.exec(dataUrl) : null;
+    if (!m) return { ok: false, error: 'That is not a PNG image.' };
+    const buf = Buffer.from(m[1], 'base64');
+    if (buf.length < 67 || buf.length > PNG_MAX_BYTES || !buf.subarray(0, 8).equals(PNG_SIGNATURE)) return { ok: false, error: 'That is not a valid PNG image.' };
+    // The name is only a suggestion: strip anything a file name cannot hold and keep it short.
+    const base = String(typeof suggestedName === 'string' ? suggestedName : 'Family tree').replace(/[\u0000-\u001f<>:"/\\|?*]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 80) || 'Family tree';
+    const win = BrowserWindow.fromWebContents(e.sender);
+    const r = await dialog.showSaveDialog(win || undefined, {
+      title: 'Export family tree',
+      defaultPath: path.join(app.getPath('pictures'), base + '.png'),
+      filters: [{ name: 'PNG image', extensions: ['png'] }]
+    });
+    if (r.canceled || !r.filePath) return { ok: false, canceled: true };
+    try {
+      await writeAtomic(r.filePath.toLowerCase().endsWith('.png') ? r.filePath : r.filePath + '.png', buf);
+      return { ok: true };
+    } catch { return { ok: false, error: 'The file could not be saved.' }; }
+  });
+
   // spell:replace swaps the misspelled word of the last right-click for a suggestion. The renderer
   // only sends the replacement text, never a range, and only right after a context menu was shown.
   ipcMain.handle('spell:replace', (e, text) => {

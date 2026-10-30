@@ -513,40 +513,6 @@
     data.families.splice(clamp(pos, data.families.length), 0, f);
   });
 
-  // ---- family members (part 7j1) -----------------------------------------------------------------
-  // A member is { id, x, gen }: a character placed on the canvas. These only ever touch the family;
-  // the character itself is never changed or deleted from here.
-  const snapX = (v) => (Number.isFinite(v) ? Math.max(-100000, Math.min(100000, Math.round(v))) : 0);
-  const snapGen = (v) => (Number.isInteger(v) ? Math.max(0, Math.min(200, v)) : 0);
-  const addFamilyMembers = (familyId, items) => commit('add to family', () => {
-    const f = findFamily(familyId);
-    if (!f) return [];
-    const added = [];
-    for (const it of Array.isArray(items) ? items : []) {
-      if (!it || !data.characters.some((c) => c.id === it.id) || f.members.some((m) => m.id === it.id)) continue;
-      f.members.push({ id: it.id, x: snapX(it.x), gen: snapGen(it.gen) });
-      added.push(it.id);
-    }
-    return added;
-  });
-  // Takes a character out of the family only, together with the links that touch it. One undo step.
-  const removeFamilyMember = (familyId, characterId) => commit('remove from family', () => {
-    const f = findFamily(familyId);
-    const i = f ? f.members.findIndex((m) => m.id === characterId) : -1;
-    if (i < 0) return false;
-    f.members.splice(i, 1);
-    f.links = f.links.filter((l) => l.from !== characterId && l.to !== characterId);
-    return true;
-  });
-  // Coalesced so a nudge by keyboard held down is one undo step; a drag commits once on release.
-  const moveFamilyMember = (familyId, characterId, x, gen, opts) => commit('move in family', () => {
-    const f = findFamily(familyId);
-    const m = f && f.members.find((n) => n.id === characterId);
-    if (!m) return;
-    m.x = snapX(x);
-    m.gen = snapGen(gen);
-  }, opts);
-
   const suggestRelationColor = () => randomColor(data.relationTypes.map((t) => t.color).filter(Boolean));
   const addRelationType = ({ name, inverse = '', color = '', directed = false } = {}) => commit('add relationship type', () => {
     const n = cleanName(name, 60);
@@ -582,6 +548,77 @@
     for (const f of data.families) for (const l of f.links) if (l.type === id) { l.type = REL_NEUTRAL; moved++; }
     data.relationTypes.splice(data.relationTypes.indexOf(t), 1);
     return moved;
+  });
+
+  // ---- the family canvas (part 7j) ---------------------------------------------------------------
+  // Members hold where a character sits (x free, gen = the band). Links read "from is <type> of to":
+  // for a directed type such as parent, from is the parent. Every function below is one undo step.
+  const GEN_MAX = 40;
+  const num = (n, d = 0) => (Number.isFinite(n) ? n : d);
+  const sameLink = (a, from, to, type) => a.type === type && ((a.from === from && a.to === to) || (!relType(type)?.directed && a.from === to && a.to === from));
+
+  // Returns the ids that were added. Characters that do not exist or are already members are skipped.
+  const addFamilyMembers = (familyId, list) => commit('add to family', () => {
+    const f = findFamily(familyId);
+    const added = [];
+    if (!f) return added;
+    for (const m of Array.isArray(list) ? list : []) {
+      if (!m || !data.characters.some((c) => c.id === m.id) || f.members.some((x) => x.id === m.id)) continue;
+      f.members.push({ id: m.id, x: num(m.x), gen: Math.max(0, Math.min(GEN_MAX, Math.round(num(m.gen)))) });
+      added.push(m.id);
+    }
+    return added;
+  });
+  // Takes characters out of this family only (and the links that touched them). The characters stay.
+  const removeFamilyMembers = (familyId, ids) => commit('remove from family', () => {
+    const f = findFamily(familyId);
+    if (!f) return 0;
+    const gone = new Set(ids);
+    const before = f.members.length;
+    f.members = f.members.filter((m) => !gone.has(m.id));
+    f.links = f.links.filter((l) => !gone.has(l.from) && !gone.has(l.to));
+    return before - f.members.length;
+  });
+  // moves: [{ id, x, gen }]. A drag passes a coalesce key so repeated nudges are one step; Auto-arrange passes none.
+  const moveFamilyMembers = (familyId, moves, opts, label = 'move in family') => commit(label, () => {
+    const f = findFamily(familyId);
+    if (!f) return;
+    for (const mv of Array.isArray(moves) ? moves : []) {
+      const m = f.members.find((x) => x.id === mv.id);
+      if (!m) continue;
+      m.x = num(mv.x, m.x);
+      m.gen = Math.max(0, Math.min(GEN_MAX, Math.round(num(mv.gen, m.gen))));
+    }
+  }, opts);
+  // Returns the new link id, or null when it cannot be made (a missing member, itself, or the same pair and type twice).
+  const addFamilyLink = (familyId, from, to, type) => commit('add relationship', () => {
+    const f = findFamily(familyId);
+    if (!f || from === to || !relType(type)) return null;
+    if (!f.members.some((m) => m.id === from) || !f.members.some((m) => m.id === to)) return null;
+    if (f.links.some((l) => sameLink(l, from, to, type))) return null;
+    const l = { id: uid(), from, to, type };
+    f.links.push(l);
+    return l.id;
+  });
+  // patch: { type } and/or { swap: true } (reverse a directed link). Returns false if it would duplicate another link.
+  const updateFamilyLink = (familyId, linkId, patch = {}) => commit('change relationship', () => {
+    const f = findFamily(familyId);
+    const l = f && f.links.find((x) => x.id === linkId);
+    if (!l) return false;
+    const next = { ...l };
+    if (patch.type && relType(patch.type)) next.type = patch.type;
+    if (patch.swap) { next.from = l.to; next.to = l.from; }
+    if (f.links.some((x) => x.id !== l.id && sameLink(x, next.from, next.to, next.type))) return false;
+    Object.assign(l, next);
+    return true;
+  });
+  const removeFamilyLinks = (familyId, ids) => commit('remove relationship', () => {
+    const f = findFamily(familyId);
+    if (!f) return 0;
+    const gone = new Set(ids);
+    const before = f.links.length;
+    f.links = f.links.filter((l) => !gone.has(l.id));
+    return before - f.links.length;
   });
 
   const duplicateEntity = (kind, id) => commit(`duplicate ${KIND_ONE[kind]}`, () => {
@@ -954,7 +991,8 @@
     REL_NEUTRAL, family: findFamily, relType, suggestRelationColor,
     addFamily, renameFamily, setFamilyColor, setFamilyImage, removeFamilyImage, deleteFamily, reorderFamilies,
     addRelationType, updateRelationType, deleteRelationType,
-    addFamilyMembers, removeFamilyMember, moveFamilyMember,
+    // part 7j
+    GEN_MAX, addFamilyMembers, removeFamilyMembers, moveFamilyMembers, addFamilyLink, updateFamilyLink, removeFamilyLinks,
     setSpellLanguage, typography, setTypography,
     undo, redo, canUndo: () => undoStack.length > 0, canRedo: () => redoStack.length > 0
   };

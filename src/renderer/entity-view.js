@@ -6,7 +6,7 @@
   const $ = (s) => document.querySelector(s);
 
   const CONFIG = {
-    characters: { title: 'Characters', one: 'character', nameLabel: 'Name', aliases: true, thumb: true, short: true, content: true, attributes: true, tags: true, scenes: true, subtitle: 'short' },
+    characters: { title: 'Characters', one: 'character', nameLabel: 'Name', aliases: true, thumb: true, short: true, content: true, attributes: true, tags: true, scenes: true, family: true, subtitle: 'short' },
     places: { title: 'Places', one: 'place', nameLabel: 'Name', aliases: true, thumb: true, short: true, content: true, attributes: true, tags: true, scenes: true, subtitle: 'short' },
     notes: { title: 'Notes', one: 'note', nameLabel: 'Title', content: true, tags: true, scenes: true, subtitle: 'preview' },
     tags: { title: 'Tags', one: 'tag', nameLabel: 'Name', color: true, short: true, usage: true, subtitle: 'short' }
@@ -22,6 +22,7 @@
           <div class="ev-side">
             ${cfg.tags ? '<div class="ev-block"><span class="lbl">Tags</span><div class="ev-tags"></div></div>' : ''}
             ${cfg.scenes ? '<div class="ev-block"><span class="lbl">Scenes</span><div class="ev-scenes"></div></div>' : ''}
+            ${cfg.family ? '<div class="ev-block ev-family-block" hidden><span class="lbl">Family</span><div class="ev-family"></div></div>' : ''}
             ${cfg.usage ? '<div class="ev-block"><span class="lbl">Used by</span><div class="ev-usage"></div></div>' : ''}
           </div>
           <div class="ev-main">
@@ -209,6 +210,61 @@
       }));
     }
 
+    // Part 7j: who this character is related to, family by family. Read only; each chip opens that character.
+    // `from is <type> of to`: when this character is `from` the other one is the inverse of the type, otherwise the type itself.
+    function renderFamily(e) {
+      const block = q('.ev-family-block');
+      const host = q('.ev-family');
+      if (!block || !host) return;
+      const rows = [];
+      for (const fam of S.data.families || []) {
+        if (!fam.members.some((m) => m.id === e.id)) continue;
+        const rel = new Map();   // relative id -> [labels]
+        for (const l of fam.links) {
+          if (l.from !== e.id && l.to !== e.id) continue;
+          const t = S.relType(l.type) || S.relType(S.REL_NEUTRAL);
+          const other = l.from === e.id ? l.to : l.from;
+          const label = l.from === e.id ? (t.directed ? (t.inverse || `reverse of ${t.name}`) : t.name) : t.name;
+          if (!rel.has(other)) rel.set(other, []);
+          if (!rel.get(other).includes(label)) rel.get(other).push(label);
+        }
+        rows.push([fam, rel]);
+      }
+      block.hidden = !rows.length;
+      host.replaceChildren(...rows.map(([fam, rel]) => {
+        const box = document.createElement('div');
+        const h = document.createElement('div');
+        h.className = 'ev-usage-h';
+        if (emw.familyTree) {
+          const open = document.createElement('button');
+          open.type = 'button';
+          open.className = 'ev-family-open';
+          open.textContent = fam.name || 'Unnamed family';
+          open.title = 'Open this family tree';
+          open.addEventListener('click', () => emw.familyTree.open(fam.id));
+          h.append(open);
+        } else h.textContent = fam.name || 'Unnamed family';
+        const chips = document.createElement('div');
+        chips.className = 'lf-chips';
+        for (const [id, labels] of rel) {
+          const c = S.entity('characters', id);
+          if (!c) continue;
+          const chip = document.createElement('span'); chip.className = 'chip';
+          const b = document.createElement('button'); b.type = 'button'; b.className = 'chip-name';
+          b.textContent = c.name || 'Unnamed character';
+          b.setAttribute('aria-label', `${c.name || 'Unnamed character'}, ${labels.join(', ')}`);
+          b.addEventListener('click', () => emw.openEntity('characters', id));
+          const sub = document.createElement('span'); sub.className = 'chip-sub'; sub.textContent = labels.join(', ');
+          sub.setAttribute('aria-hidden', 'true');
+          chip.append(b, sub);
+          chips.append(chip);
+        }
+        if (!chips.children.length) { const none = document.createElement('span'); none.className = 'hint'; none.textContent = 'No relationships drawn yet'; chips.append(none); }
+        box.append(h, chips);
+        return box;
+      }));
+    }
+
     async function loadThumb(e) {
       if (!thumbImg) return;
       if (!e.hasThumb) { thumbImg.hidden = true; unpick.hidden = true; return; }
@@ -233,6 +289,7 @@
       if (cfg.scenes) fields.scenes.refresh();
       if (cfg.attributes) renderAttributes(e, force);
       if (cfg.usage) renderUsage(e);
+      if (cfg.family) renderFamily(e);
       loadThumb(e);
     }
 
